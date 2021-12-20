@@ -28,7 +28,7 @@ class Config(object):
         parser.add_argument('-d', '--sys_device_ids', type=str, default='0')
         parser.add_argument('--set_seed', type=str2bool, default=False)
         ## dataset parameter
-        parser.add_argument('--split', type=int, default=6000)
+        parser.add_argument('--split', type=int, default=8000)
         parser.add_argument('--resize', type=eval, default=(224, 224))
         parser.add_argument('--mirror', type=str2bool, default=True)
         parser.add_argument('--test-batch', default=4, type=int, help="has to be 1")
@@ -50,7 +50,7 @@ class Config(object):
         parser.add_argument('--epochs_per_val', type=int, default=1)
         parser.add_argument('--epochs_per_save', type=int, default=50)
 
-        parser.add_argument('--max-epoch', default=10, type=int,
+        parser.add_argument('--max-epoch', default=30, type=int,
                     help="maximum epochs to run")
         parser.add_argument('--start-epoch', default=0, type=int,
                     help="manual epoch number (useful on restarts)")
@@ -206,6 +206,7 @@ class Manager(object):
             torch.cuda.empty_cache()
             if i % self.cfg.epochs_per_val==0 :
                 self.eval(i)
+                self.test(i)
             torch.cuda.empty_cache()
 
     def train_framework_epoch(self):
@@ -305,25 +306,39 @@ class Manager(object):
 
     def test(self, epoch):
         self.net.eval()
-        for i, (img, labels) in enumerate(self.dataloader_val):
+        for i, (imgname, img) in enumerate(self.dataloader_test):
             #print("yjz_debug:labels:", labels)
+            imgname = np.array(imgname)
             img = Variable(img.cuda())
             x1= self.net(img)
             pre_x1 =(torch.argmax(x1, dim=1)).cpu().detach().numpy()
-
             #pre_rec = (torch.sigmoid(rec) > 0.5).cpu().detach().numpy()
             if i == 0:
+                pre_img_arr = imgname.copy()
                 pre_x1_arr = pre_x1.copy()
                 #pre_rec_arr = pre_rec.copy()
 
             else:
-
                 pre_x1_arr = np.hstack((pre_x1_arr, pre_x1))
+                pre_img_arr = np.hstack((pre_img_arr, imgname))
                 #pre_rec_arr = np.vstack((pre_rec_arr, pre_rec))
 
         print('***************************test******************************')
+        self.save_test(epoch, pre_img_arr, pre_x1_arr, 'x_1')
+        #np.save("pre.npy", pre_x1_arr)
+    
+    def save_test(self, epoch, img, label, info=''):
+        save_name = info + '_' + str(epoch) + '_'
+        path = self.mkdir_save(self.save_module_path)
+        ori_path = path
+        path_pre = os.path.join(ori_path, save_name + '_pre.txt')
+        
+        with open(path_pre, 'w') as test_file:
+            for i in range(len(img)):
+                result = '{} {}\n'.format(img[i], label[i]+1)
+                test_file.write(result)
+            test_file.close()
 
-        np.save("pre.npy", pre_x1_arr)
 
     def mkdir_save(self, rootpath):
         if not os.path.exists(rootpath):
@@ -371,6 +386,7 @@ if __name__ == '__main__':
     #dic = control.load("model.pt")
     #control.net.load_state_dict(dic['model_state_dict'])
     control.eval(0)
+    control.test(0)
     #control.train()
     #a = control.net.relation_part.all_map.cpu().detach().numpy()
     #np.save("all_map.npy", a)

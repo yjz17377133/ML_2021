@@ -75,14 +75,14 @@ class CarDataset_test(data.Dataset):
         """
         imgname = self.test_image[index]
         # load image and labels
-        imgname = os.path.join(self.train_file, imgname)
+        imgname = os.path.join(self.test_file, imgname)
         img = Image.open(imgname)
         if self.transform is not None:
             img = self.transform( img )
-        
+        imgname = os.path.basename(imgname)
 
-        return img
+        return imgname, img
 
     # useless for personal batch sampler
     def __len__(self):
-        return len(self.image)
+        return len(self.test_image)
