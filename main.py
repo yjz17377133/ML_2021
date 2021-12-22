@@ -13,12 +13,12 @@ from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from data import CarDataset_train, CarDataset_test
 from loss import ClassifyLoss
-from model import BaseNet
+from model import BaseNet, SimNet
 from utils.utils import may_mkdir
 from utils.utils import time_str
 from utils.utils import str2bool
 
-from sklearn.cluster import KMeans
+from tqdm import tqdm
 
 
 class Config(object):
@@ -28,7 +28,7 @@ class Config(object):
         parser.add_argument('-d', '--sys_device_ids', type=str, default='0')
         parser.add_argument('--set_seed', type=str2bool, default=False)
         ## dataset parameter
-        parser.add_argument('--split', type=int, default=8000)
+        parser.add_argument('--split', type=int, default=7000)
         parser.add_argument('--resize', type=eval, default=(224, 224))
         parser.add_argument('--mirror', type=str2bool, default=True)
         parser.add_argument('--test-batch', default=4, type=int, help="has to be 1")
@@ -36,8 +36,8 @@ class Config(object):
                     help="train batch size")
         parser.add_argument('--workers', type=int, default=4)
         # model
-        parser.add_argument('-m', '--model', type=str, default='BASE',
-                    choices=['BASE'])   
+        parser.add_argument('-m', '--model', type=str, default='SIM',
+                    choices=['BASE', 'SIM'])   
 
         parser.add_argument('--num_k', type=int, default = 5)
         # utils
@@ -56,7 +56,7 @@ class Config(object):
                     help="manual epoch number (useful on restarts)")
         parser.add_argument('--class-num', default=196, type=int,
                     help="number of classes")
-        parser.add_argument('--lr', '--learning-rate', default=1e-4, type=float,
+        parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     help="initial learning rate, use 0.0001 for rnn, use 0.0003 for pooling and attention")
         parser.add_argument('--stepsize', default=100, type=int,
                     help="stepsize to decay learning rate (>0 means this is enabled)")
@@ -182,9 +182,11 @@ class Manager(object):
         self.dataloader_val = val_loader
         if model=='BASE':
             self.net = BaseNet(self.class_num)
+        if model=='SIM':
+            self.net = SimNet(self.class_num)
         
         self.net.cuda()
-        self.optimizer = optim_collection['Adam'](params=self.net.parameters(), lr=lr)
+        self.optimizer = optim_collection['SGD'](params=self.net.parameters(), lr=lr, weight_decay = cfg.weight_decay)
 
         #self.criterion = criterion_collection['BCE']()
         self.criterion = ClassifyLoss(self.class_num)
@@ -201,17 +203,26 @@ class Manager(object):
 
     def train(self):
         train_len = len(self.dataloader_train)
+        loss_old = 100000
+        lr_now = cfg.lr
         for i in range(self.cfg.start_epoch, self.cfg.max_epoch):
-            self.train_framework_epoch()
+            loss = self.train_framework_epoch()
+            if loss_old < loss:
+                lr_now *= 0.5
+                self.optimizer = optim_collection['SGD'](params=self.net.parameters(), lr=lr_now)
+                print('lr decay!!!')
+            else:
+            	loss_old = loss
             torch.cuda.empty_cache()
-            if i % self.cfg.epochs_per_val==0 :
+            if i % self.cfg.epochs_per_val==0:
                 self.eval(i)
                 self.test(i)
             torch.cuda.empty_cache()
 
     def train_framework_epoch(self):
         self.net.train()
-        for j, (img, labels) in enumerate(self.dataloader_train):
+        loss_sum = 0
+        for j, (img, labels) in enumerate(tqdm(self.dataloader_train)):
             #print("yjz_debug:labels:", labels)
             # if j ==0: break
             # print(datetime.now(),j)
@@ -219,18 +230,19 @@ class Manager(object):
             labels = Variable(labels.cuda())
             self.optimizer.zero_grad()
             x1 = self.net(img)
-
             loss_tmp = self.criterion(x1, labels)
+            loss_sum += loss_tmp.item()
             loss_tmp.backward(retain_graph=0)
             #retain_graph = len(outs)
             #loss_map = self.mapcriterion(target_map, using_map)
             #loss_map.backward(retain_graph = retain_graph)
             self.optimizer.step()
-            print('success 1')
-            if j % 100 == 0:
-                print(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), j)
+            # if j % 100 == 0:
+            #     print(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), j)
             # if j == 2:
             #     break
+        print("loss sum = {:.4f}".format(loss_sum))
+        return loss_sum
 
     def eval(self, epoch):
         self.net.eval()
@@ -382,11 +394,11 @@ class Manager(object):
 if __name__ == '__main__':
     print(cfg.args)
     os.environ["CUDA_VISIBLE_DEVICES"] = cfg.sys_device_ids
-    control = Manager(inf='base_train', cfg = cfg)
+    control = Manager(inf='base_train_sim', cfg = cfg)
     #dic = control.load("model.pt")
     #control.net.load_state_dict(dic['model_state_dict'])
-    control.eval(0)
-    control.test(0)
+    #control.eval(0)
+    #control.test(0)
     #control.train()
     #a = control.net.relation_part.all_map.cpu().detach().numpy()
     #np.save("all_map.npy", a)
